@@ -63,7 +63,7 @@ const AppNavigator = () => {
   return (
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {true ? (
+        {user ? (
           <>
             <Stack.Screen name="Main" component={TabNavigator} />
             <Stack.Screen name="Reading" component={ReadingScreen} />
