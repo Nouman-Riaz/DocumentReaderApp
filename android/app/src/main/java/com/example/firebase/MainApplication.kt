@@ -1,4 +1,4 @@
-package com.documentreader
+package com.example.firebase
 
 import android.app.Application
 import com.facebook.react.PackageList

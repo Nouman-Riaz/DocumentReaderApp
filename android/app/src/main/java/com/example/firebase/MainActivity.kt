@@ -1,4 +1,4 @@
-package com.documentreader
+package com.example.firebase
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
