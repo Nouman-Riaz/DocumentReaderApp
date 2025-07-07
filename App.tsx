@@ -10,17 +10,25 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 
 // Screens
 import AuthScreen from './src/screens/AuthScreen';
-import HomeScreen from './src/screens/LibraryScreen';
-import LibraryScreen from './src/screens/HomeScreen';
+import HomeScreen from './src/screens/HomeScreen';
+import LibraryScreen from './src/screens/LibraryScreen';
 import ReadingScreen from './src/screens/ReadingScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
+import HistoryScreen from './src/screens/HistoryScreen';
 
 // Services
 import { useAuthState } from './src/services/authService';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60 * 1000, // 5 minutes
+      cacheTime: 10 * 60 * 1000, // 10 minutes
+    },
+  },
+});
 
 const TabNavigator = () => (
   <Tab.Navigator
@@ -34,6 +42,9 @@ const TabNavigator = () => (
           case 'Library':
             iconName = 'library-books';
             break;
+          case 'History':
+            iconName = 'history';
+            break;
           case 'Profile':
             iconName = 'person';
             break;
@@ -45,11 +56,38 @@ const TabNavigator = () => (
       tabBarActiveTintColor: '#6200EE',
       tabBarInactiveTintColor: 'gray',
       headerShown: false,
+      tabBarLabelStyle: {
+        fontSize: 12,
+        fontWeight: '500',
+      },
+      tabBarStyle: {
+        height: 60,
+        paddingBottom: 8,
+        paddingTop: 8,
+        elevation: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
     })}
   >
-    <Tab.Screen name="Home" component={HomeScreen} />
-    <Tab.Screen name="Library" component={LibraryScreen} />
-    <Tab.Screen name="Profile" component={ProfileScreen} />
+    <Tab.Screen name="Home" component={HomeScreen} options={{
+        tabBarLabel: 'Home',
+      }}/>
+    <Tab.Screen name="Library" component={LibraryScreen} options={{
+        tabBarLabel: 'Library',
+      }}/>
+      <Tab.Screen 
+      name="History" 
+      component={HistoryScreen}
+      options={{
+        tabBarLabel: 'History',
+      }}
+    />
+    <Tab.Screen name="Profile" component={ProfileScreen} options={{
+        tabBarLabel: 'Profile',
+      }}/>
   </Tab.Navigator>
 );
 
@@ -63,7 +101,7 @@ const AppNavigator = () => {
   return (
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {true ? (
+        {user ? (
           <>
             <Stack.Screen name="Main" component={TabNavigator} />
             <Stack.Screen name="Reading" component={ReadingScreen} />

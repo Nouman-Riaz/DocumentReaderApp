@@ -96,85 +96,11 @@ const ProfileScreen = ({ navigation }) => {
           </Card.Content>
         </Card>
 
-        <Card style={styles.settingsCard}>
-          <Card.Content>
-            <Title style={styles.cardTitle}>Settings</Title>
-            
-            <List.Item
-              title="Dark Mode"
-              description="Enable dark theme"
-              left={() => <List.Icon icon="theme-light-dark" />}
-              right={() => (
-                <Switch
-                  value={darkMode}
-                  onValueChange={setDarkMode}
-                />
-              )}
-            />
-            
-            <List.Item
-              title="Notifications"
-              description="Receive reading reminders"
-              left={() => <List.Icon icon="bell" />}
-              right={() => (
-                <Switch
-                  value={notifications}
-                  onValueChange={setNotifications}
-                />
-              )}
-            />
-
-            <Divider style={styles.divider} />
-
-            <List.Item
-              title="Storage Usage"
-              description="Manage your uploaded files"
-              left={() => <List.Icon icon="storage" />}
-              right={() => <List.Icon icon="chevron-right" />}
-              onPress={() => Alert.alert('Storage', 'Storage management coming soon!')}
-            />
-
-            <List.Item
-              title="Reading History"
-              description="View your reading activity"
-              left={() => <List.Icon icon="history" />}
-              right={() => <List.Icon icon="chevron-right" />}
-              onPress={() => Alert.alert('History', 'Reading history coming soon!')}
-            />
-
-            <List.Item
-              title="Export Data"
-              description="Download your reading data"
-              left={() => <List.Icon icon="download" />}
-              right={() => <List.Icon icon="chevron-right" />}
-              onPress={() => Alert.alert('Export', 'Data export coming soon!')}
-            />
-
-            <Divider style={styles.divider} />
-
-            <List.Item
-              title="Help & Support"
-              description="Get help with the app"
-              left={() => <List.Icon icon="help" />}
-              right={() => <List.Icon icon="chevron-right" />}
-              onPress={() => Alert.alert('Support', 'Contact support at support@ebookreader.com')}
-            />
-
-            <List.Item
-              title="About"
-              description="App version and information"
-              left={() => <List.Icon icon="information" />}
-              right={() => <List.Icon icon="chevron-right" />}
-              onPress={() => Alert.alert('About', 'E-Book Reader v1.0.0\nBuilt with React Native')}
-            />
-          </Card.Content>
-        </Card>
-
         <Card style={styles.accountCard}>
           <Card.Content>
             <Title style={styles.cardTitle}>Account</Title>
             
-            <Button
+            {/* <Button
               mode="outlined"
               onPress={() => Alert.alert('Change Password', 'Password change coming soon!')}
               style={styles.accountButton}
@@ -191,7 +117,7 @@ const ProfileScreen = ({ navigation }) => {
               textColor="#d32f2f"
             >
               Delete Account
-            </Button>
+            </Button> */}
 
             <Button
               mode="contained"

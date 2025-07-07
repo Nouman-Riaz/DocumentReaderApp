@@ -116,7 +116,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   chip: {
-    height: 24,
+    height: 30,
   },
   fileSize: {
     fontSize: 12,

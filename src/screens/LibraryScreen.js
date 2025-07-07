@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, ScrollView, Alert, RefreshControl } from 'react-native';
+import { View, StyleSheet, ScrollView, Alert, RefreshControl, PermissionsAndroid, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { 
   Text, 
@@ -17,7 +17,7 @@ import {
   Divider
 } from 'react-native-paper';
 import { useQuery } from '@tanstack/react-query';
-import DocumentPicker from '@react-native-documents/picker';
+import { pick, types } from '@react-native-documents/picker';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
 import { useAuthState } from '../services/authService';
@@ -31,11 +31,8 @@ const LibraryScreen = ({ navigation }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('recent');
   const [filterType, setFilterType] = useState('all');
-  const [menuVisible, setMenuVisible] = useState(false);
-  const [filterMenuVisible, setFilterMenuVisible] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'list'
 
   const { data: library, isLoading, refetch } = useQuery({
     queryKey: ['library', user?.uid],
@@ -102,46 +99,80 @@ const LibraryScreen = ({ navigation }) => {
     }
   };
 
+  const requestStoragePermission = async () => {
+    if (Platform.OS === 'android') {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
+        {
+          title: 'Storage Permission',
+          message: 'This app needs access to your storage to upload files.',
+        }
+      );
+      console.log("Granted===>",granted);
+      return granted === PermissionsAndroid.RESULTS.GRANTED;
+    }
+    return true;
+  };
+
   const handleFileUpload = async () => {
+    // console.log("<=====In function=====>");
+    // const hasPermission = await requestStoragePermission();
+    // console.log("Has Permission====>",hasPermission);
+  // if (hasPermission) {
     try {
-      const result = await DocumentPicker.pick({
-        type: [DocumentPicker.types.pdf, 'application/epub+zip'],
-        allowMultiSelection: true,
+      const result = await pick({
+        allowMultiSelection: false,
+        type: [types.pdf, 'application/epub+zip'],
+        copyTo: 'cachesDirectory',
       });
 
-      setUploading(true);
-
-      for (const file of result) {
-        const fileName = `${Date.now()}_${file.name}`;
-        const uploadResult = await uploadFile(file.uri, fileName, user.uid);
-
-        if (uploadResult.success) {
-          const bookData = {
-            id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-            title: file.name.replace(/\.[^/.]+$/, ''),
-            fileName: file.name,
-            fileSize: file.size,
-            fileType: file.type,
-            downloadURL: uploadResult.downloadURL,
-            uploadedAt: new Date().toISOString(),
-            addedAt: new Date().toISOString(),
-            progress: 0,
-            lastRead: null,
-          };
-
-          await saveBookToLibrary(user.uid, bookData);
-        }
+      if (!result || result.length === 0) {
+        return; // User cancelled
       }
 
-      refetch();
-      Alert.alert('Success', `${result.length} book(s) uploaded successfully!`);
+      const file = result[0];
+      console.log("File====>",file);
+      setUploading(true);
+      // const documentUri = await getPathForFirebaseStorage(file.uri);
+      const filePath = file.fileCopyUri || file.uri;
+      const fileName = `${Date.now()}_${file.name}`;
+      const uploadResult = await uploadFile(filePath, fileName, user.uid);
+
+      if (uploadResult.success) {
+        const bookData = {
+          id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+          title: file.name.replace(/\.[^/.]+$/, ''),
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type,
+          downloadURL: uploadResult.downloadURL,
+          storagePath: uploadResult.storagePath,
+          uploadedAt: new Date().toISOString(),
+        };
+
+        const saveResult = await saveBookToLibrary(user.uid, bookData);
+        
+        if (saveResult.success) {
+          refetch();
+          Alert.alert('Success', 'Book uploaded successfully!');
+        } else {
+          Alert.alert('Error', 'Failed to save book data');
+        }
+      } else {
+        Alert.alert('Error', 'Failed to upload book');
+      }
     } catch (error) {
-      if (!DocumentPicker.isCancel(error)) {
-        Alert.alert('Error', 'Failed to upload book(s)');
+      console.log("File Selection Error==>", error);
+      if (!error.message?.includes('User canceled')) {
+        Alert.alert('Error', 'Failed to select file');
       }
     } finally {
       setUploading(false);
     }
+  // }
+    // else{
+    //   Alert.alert("Permission Denied', 'Cannot access storage without permission");
+    // }
   };
 
   const handleRefresh = async () => {
@@ -236,10 +267,6 @@ const LibraryScreen = ({ navigation }) => {
         </View>
         <View style={styles.headerRight}>
           <IconButton
-            icon={viewMode === 'grid' ? 'view-list' : 'view-module'}
-            onPress={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
-          />
-          <IconButton
             icon="upload"
             onPress={handleFileUpload}
             disabled={uploading}
@@ -290,84 +317,8 @@ const LibraryScreen = ({ navigation }) => {
             >
               EPUB
             </Chip>
-            <Chip
-              selected={filterType === 'recent'}
-              onPress={() => setFilterType('recent')}
-              style={styles.chip}
-              icon="clock"
-            >
-              Recent
-            </Chip>
-            <Chip
-              selected={filterType === 'unread'}
-              onPress={() => setFilterType('unread')}
-              style={styles.chip}
-              icon="book-outline"
-            >
-              Unread
-            </Chip>
-            <Chip
-              selected={filterType === 'reading'}
-              onPress={() => setFilterType('reading')}
-              style={styles.chip}
-              icon="book-open"
-            >
-              Reading
-            </Chip>
-            <Chip
-              selected={filterType === 'completed'}
-              onPress={() => setFilterType('completed')}
-              style={styles.chip}
-              icon="check-circle"
-            >
-              Done
-            </Chip>
           </View>
         </ScrollView>
-
-        <Menu
-          visible={menuVisible}
-          onDismiss={() => setMenuVisible(false)}
-          anchor={
-            <IconButton
-              icon="sort"
-              onPress={() => setMenuVisible(true)}
-            />
-          }
-        >
-          <Menu.Item
-            onPress={() => {
-              setSortBy('recent');
-              setMenuVisible(false);
-            }}
-            title="Recently Added"
-            leadingIcon={sortBy === 'recent' ? 'check' : 'clock'}
-          />
-          <Menu.Item
-            onPress={() => {
-              setSortBy('title');
-              setMenuVisible(false);
-            }}
-            title="Title (A-Z)"
-            leadingIcon={sortBy === 'title' ? 'check' : 'sort-alphabetical-ascending'}
-          />
-          <Menu.Item
-            onPress={() => {
-              setSortBy('size');
-              setMenuVisible(false);
-            }}
-            title="File Size"
-            leadingIcon={sortBy === 'size' ? 'check' : 'file-chart'}
-          />
-          <Menu.Item
-            onPress={() => {
-              setSortBy('progress');
-              setMenuVisible(false);
-            }}
-            title="Reading Progress"
-            leadingIcon={sortBy === 'progress' ? 'check' : 'progress-check'}
-          />
-        </Menu>
       </View>
 
       {/* Active Filters Info */}
@@ -396,7 +347,7 @@ const LibraryScreen = ({ navigation }) => {
         }
       >
         {filteredBooks.length > 0 ? (
-          <View style={viewMode === 'grid' ? styles.gridContainer : styles.listContainer}>
+          <View style={styles.listContainer}>
             {filteredBooks.map(book => (
               <BookCard 
                 key={book.id} 
@@ -404,8 +355,6 @@ const LibraryScreen = ({ navigation }) => {
                 onPress={() => handleBookPress(book)}
                 onLongPress={() => handleBookLongPress(book)}
                 showProgress={true}
-                viewMode={viewMode}
-                style={viewMode === 'grid' ? styles.gridItem : styles.listItem}
               />
             ))}
           </View>

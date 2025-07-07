@@ -1,9 +1,9 @@
-// import firestore from '@react-native-firebase/firestore';
-// import auth from '@react-native-firebase/auth';
-// import storage from '@react-native-firebase/storage';
+import firestore from '@react-native-firebase/firestore';
+import auth from '@react-native-firebase/auth';
+import storage from '@react-native-firebase/storage';
 
 // TODO: Uncomment and configure when Firebase credentials are available
-/*
+
 const firebaseConfig = {
   apiKey: "your-api-key",
   authDomain: "your-auth-domain",
@@ -12,7 +12,7 @@ const firebaseConfig = {
   messagingSenderId: "your-messaging-sender-id",
   appId: "your-app-id"
 };
-*/
+
 
 // Mock services for development
 const mockAuth = {
@@ -54,10 +54,10 @@ const mockAuth = {
   };
   
   // Export services (uncomment Firebase when ready)
-  // export const authService = auth();
-  // export const firestoreService = firestore();
-  // export const storageService = storage();
+  export const authService = auth();
+  export const firestoreService = firestore();
+  export const storageService = storage();
   
-  export const authService = mockAuth;
-  export const firestoreService = mockFirestore;
-  export const storageService = mockStorage;
+  // export const authService = mockAuth;
+  // export const firestoreService = mockFirestore;
+  // export const storageService = mockStorage;
