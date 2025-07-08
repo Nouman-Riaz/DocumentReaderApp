@@ -7,6 +7,7 @@ import { Provider as PaperProvider } from 'react-native-paper';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { ReaderProvider } from '@epubjs-react-native/core';
 
 // Screens
 import AuthScreen from './src/screens/AuthScreen';
@@ -118,10 +119,11 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <PaperProvider>
+      <ReaderProvider>
         <SafeAreaProvider>
           <StatusBar backgroundColor="#ffffff" barStyle="dark-content" />
           <AppNavigator />
-        </SafeAreaProvider>
+        </SafeAreaProvider></ReaderProvider>
       </PaperProvider>
     </QueryClientProvider>
   );
