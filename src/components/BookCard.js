@@ -1,13 +1,213 @@
+// import React from 'react';
+// import { View, StyleSheet, TouchableOpacity } from 'react-native';
+// import { Card, Text, Paragraph, ProgressBar, Chip } from 'react-native-paper';
+// import Icon from 'react-native-vector-icons/MaterialIcons';
+
+// const BookCard = ({ book, onPress, showProgress = false }) => {
+//   const formatFileSize = (bytes) => {
+//     if (!bytes) return '';
+//     const mb = bytes / (1024 * 1024);
+//     return mb > 1 ? `${mb.toFixed(1)} MB` : `${(bytes / 1024).toFixed(1)} KB`;
+//   };
+
+//   const getFileIcon = (fileType) => {
+//     if (fileType?.includes('pdf')) return 'picture-as-pdf';
+//     if (fileType?.includes('epub')) return 'book';
+//     return 'description';
+//   };
+
+//   const getFileColor = (fileType) => {
+//     if (fileType?.includes('pdf')) return '#d32f2f';
+//     if (fileType?.includes('epub')) return '#388e3c';
+//     return '#666';
+//   };
+
+//   return (
+//     <TouchableOpacity onPress={onPress}>
+//       <Card style={styles.card}>
+//         <Card.Content>
+//           <View style={styles.cardHeader}>
+//             <View style={styles.bookInfo}>
+//               <View style={styles.titleRow}>
+//                 <Icon 
+//                   name={getFileIcon(book.fileType)} 
+//                   size={20} 
+//                   color={getFileColor(book.fileType)}
+//                   style={styles.fileIcon}
+//                 />
+//                 <Text style={styles.title} numberOfLines={2}>
+//                   {book.title}
+//                 </Text>
+//               </View>
+//               <View style={styles.metadata}>
+//                 <Chip 
+//                   icon="file"
+//                   compact
+//                   style={[styles.chip, { backgroundColor: getFileColor(book.fileType) + '20' }]}
+//                   textStyle={{ color: getFileColor(book.fileType), fontSize: 10 }}
+//                 >
+//                   {book.fileType?.includes('pdf') ? 'PDF' : 'EPUB'}
+//                 </Chip>
+//                 {book.fileSize && (
+//                   <Text style={styles.fileSize}>
+//                     {formatFileSize(book.fileSize)}
+//                   </Text>
+//                 )}
+//               </View>
+//             </View>
+//           </View>
+          
+//           {showProgress && (
+//             <View style={styles.progressContainer}>
+//               <ProgressBar 
+//                 progress={0.3} // Mock progress - would come from Firestore
+//                 color="#6200EE"
+//                 style={styles.progressBar}
+//               />
+//               <Text style={styles.progressText}>30% Complete</Text>
+//             </View>
+//           )}
+          
+//           <View style={styles.footer}>
+//             <Text style={styles.uploadDate}>
+//               Added {new Date(book.uploadedAt).toLocaleDateString()}
+//             </Text>
+//             <Icon name="chevron-right" size={20} color="#666" />
+//           </View>
+//         </Card.Content>
+//       </Card>
+//     </TouchableOpacity>
+//   );
+// };
+
+// const styles = StyleSheet.create({
+//   card: {
+//     marginHorizontal: 20,
+//     marginVertical: 6,
+//     elevation: 2,
+//     borderRadius: 8,
+//   },
+//   cardHeader: {
+//     flexDirection: 'row',
+//     justifyContent: 'space-between',
+//     alignItems: 'flex-start',
+//     marginBottom: 8,
+//   },
+//   bookInfo: {
+//     flex: 1,
+//   },
+//   titleRow: {
+//     flexDirection: 'row',
+//     alignItems: 'center',
+//     marginBottom: 8,
+//   },
+//   fileIcon: {
+//     marginRight: 8,
+//   },
+//   title: {
+//     fontSize: 16,
+//     fontWeight: 'bold',
+//     color: '#333',
+//     flex: 1,
+//   },
+//   metadata: {
+//     flexDirection: 'row',
+//     alignItems: 'center',
+//     gap: 12,
+//   },
+//   chip: {
+//     height: 30,
+//   },
+//   fileSize: {
+//     fontSize: 12,
+//     color: '#666',
+//   },
+//   progressContainer: {
+//     marginVertical: 12,
+//   },
+//   progressBar: {
+//     height: 4,
+//     borderRadius: 2,
+//     marginBottom: 4,
+//   },
+//   progressText: {
+//     fontSize: 12,
+//     color: '#666',
+//     textAlign: 'right',
+//   },
+//   footer: {
+//     flexDirection: 'row',
+//     justifyContent: 'space-between',
+//     alignItems: 'center',
+//     marginTop: 8,
+//   },
+//   uploadDate: {
+//     fontSize: 12,
+//     color: '#888',
+//   },
+// });
+
+// export default BookCard;
+
+
 import React from 'react';
 import { View, StyleSheet, TouchableOpacity } from 'react-native';
 import { Card, Text, Paragraph, ProgressBar, Chip } from 'react-native-paper';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
-const BookCard = ({ book, onPress, showProgress = false }) => {
+const BookCard = ({ book, onPress, onLongPress, showProgress = false }) => {
   const formatFileSize = (bytes) => {
     if (!bytes) return '';
     const mb = bytes / (1024 * 1024);
     return mb > 1 ? `${mb.toFixed(1)} MB` : `${(bytes / 1024).toFixed(1)} KB`;
+  };
+
+  const formatDate = (dateValue) => {
+    if (!dateValue) return 'Unknown date';
+    
+    try {
+      let date;
+      
+      // Handle Firestore Timestamp
+      if (dateValue && typeof dateValue.toDate === 'function') {
+        date = dateValue.toDate();
+      }
+      // Handle Firestore Timestamp with seconds/nanoseconds
+      else if (dateValue && dateValue.seconds) {
+        date = new Date(dateValue.seconds * 1000);
+      }
+      // Handle ISO string
+      else if (typeof dateValue === 'string') {
+        date = new Date(dateValue);
+      }
+      // Handle regular Date object
+      else if (dateValue instanceof Date) {
+        date = dateValue;
+      }
+      else {
+        return 'Unknown date';
+      }
+      
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        return 'Unknown date';
+      }
+      
+      return date.toLocaleDateString();
+    } catch (error) {
+      console.error('Date formatting error:', error);
+      return 'Unknown date';
+    }
+  };
+
+  const formatProgress = (progress) => {
+    return Math.round((progress || 0) * 100);
+  };
+
+  const getProgressColor = (progress) => {
+    if (progress >= 0.9) return '#4CAF50'; // Green for completed
+    if (progress >= 0.5) return '#FF9800'; // Orange for halfway
+    return '#2196F3'; // Blue for started
   };
 
   const getFileIcon = (fileType) => {
@@ -22,8 +222,33 @@ const BookCard = ({ book, onPress, showProgress = false }) => {
     return '#666';
   };
 
+  const getStatusChip = () => {
+    const progress = book.progress || 0;
+    if (book.isCompleted || progress >= 0.95) {
+      return {
+        icon: 'check-circle',
+        label: 'Completed',
+        color: '#4CAF50'
+      };
+    } else if (progress > 0) {
+      return {
+        icon: 'book-open',
+        label: 'Reading',
+        color: '#FF9800'
+      };
+    } else {
+      return {
+        icon: 'book-outline',
+        label: 'Unread',
+        color: '#757575'
+      };
+    }
+  };
+
+  const status = getStatusChip();
+
   return (
-    <TouchableOpacity onPress={onPress}>
+    <TouchableOpacity onPress={onPress} onLongPress={onLongPress}>
       <Card style={styles.card}>
         <Card.Content>
           <View style={styles.cardHeader}>
@@ -53,24 +278,41 @@ const BookCard = ({ book, onPress, showProgress = false }) => {
                     {formatFileSize(book.fileSize)}
                   </Text>
                 )}
+                <Chip 
+                  icon={status.icon}
+                  compact
+                  style={[styles.statusChip, { backgroundColor: status.color + '20' }]}
+                  textStyle={{ color: status.color, fontSize: 10 }}
+                >
+                  {status.label}
+                </Chip>
               </View>
             </View>
           </View>
           
-          {showProgress && (
+          {(showProgress && book.progress > 0) && (
             <View style={styles.progressContainer}>
+              <View style={styles.progressInfo}>
+                <Text style={styles.progressText}>
+                  {formatProgress(book.progress)}% complete
+                </Text>
+                {book.currentPage && book.totalPages && (
+                  <Text style={styles.pageText}>
+                    Page {book.currentPage} of {book.totalPages}
+                  </Text>
+                )}
+              </View>
               <ProgressBar 
-                progress={0.3} // Mock progress - would come from Firestore
-                color="#6200EE"
+                progress={book.progress || 0}
+                color={getProgressColor(book.progress)}
                 style={styles.progressBar}
               />
-              <Text style={styles.progressText}>30% Complete</Text>
             </View>
           )}
           
           <View style={styles.footer}>
             <Text style={styles.uploadDate}>
-              Added {new Date(book.uploadedAt).toLocaleDateString()}
+              Added {formatDate(book.uploadedAt || book.addedAt)}
             </Text>
             <Icon name="chevron-right" size={20} color="#666" />
           </View>
@@ -113,10 +355,14 @@ const styles = StyleSheet.create({
   metadata: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    flexWrap: 'wrap',
+    gap: 8,
   },
   chip: {
-    height: 30,
+    height: 28,
+  },
+  statusChip: {
+    height: 28,
   },
   fileSize: {
     fontSize: 12,
@@ -125,25 +371,40 @@ const styles = StyleSheet.create({
   progressContainer: {
     marginVertical: 12,
   },
+  progressInfo: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
   progressBar: {
-    height: 4,
-    borderRadius: 2,
-    marginBottom: 4,
+    height: 6,
+    borderRadius: 3,
   },
   progressText: {
     fontSize: 12,
     color: '#666',
-    textAlign: 'right',
+    fontWeight: '500',
+  },
+  pageText: {
+    fontSize: 11,
+    color: '#888',
   },
   footer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginTop: 8,
+    flexWrap: 'wrap',
   },
   uploadDate: {
     fontSize: 12,
     color: '#888',
+  },
+  lastRead: {
+    fontSize: 11,
+    color: '#999',
+    fontStyle: 'italic',
   },
 });
 

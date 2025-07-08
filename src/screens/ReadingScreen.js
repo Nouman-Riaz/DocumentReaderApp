@@ -1,25 +1,31 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, StyleSheet, Alert, Dimensions, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { 
-  Text, 
-  IconButton, 
+import {
+  Text,
+  IconButton,
   Card,
   ProgressBar,
   Button,
-  Snackbar
+  Snackbar,
 } from 'react-native-paper';
 import Pdf from 'react-native-pdf';
 
 import { useAuthState } from '../services/authService';
-import { saveReadingProgress, getReadingProgress } from '../services/firestoreService';
+import {
+  saveReadingProgress,
+  getReadingProgress,
+} from '../services/firestoreService';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { useQueryClient } from '@tanstack/react-query';
+import { incrementBookViewCount } from '../services/firestoreService';
 
 const { width, height } = Dimensions.get('window');
 
 const ReadingScreen = ({ route, navigation }) => {
   const { book } = route.params;
   const { user } = useAuthState();
+  const clientQuery = useQueryClient();
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -31,31 +37,51 @@ const ReadingScreen = ({ route, navigation }) => {
   const [validatingURL, setValidatingURL] = useState(true);
   const [retryCount, setRetryCount] = useState(0);
   const saveTimeoutRef = useRef(null);
+  const pageChangeTimeoutRef = useRef(null);
+  const lastPageChangeRef = useRef(0);
 
   useEffect(() => {
     console.log('ReadingScreen mounted with book:', book);
     validateAndLoadBook();
   }, []);
 
+  // useEffect(() => {
+  //   if (book?.id && !validatingURL && !error) {
+  //     incrementBookViewCount(book.id);
+  //   }
+  // }, [book?.id, validatingURL, error]);
+
   useEffect(() => {
     if (totalPages > 0 && currentPage > 0) {
       const newProgress = Math.min(currentPage / totalPages, 1);
       setProgress(newProgress);
-      
+
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
-      
+
       saveTimeoutRef.current = setTimeout(() => {
         saveProgress(newProgress, currentPage);
       }, 3000);
     }
   }, [currentPage, totalPages]);
 
+  // useEffect(() => {
+  //   return () => {
+  //     // Cleanup timeouts on unmount
+  //     if (saveTimeoutRef.current) {
+  //       clearTimeout(saveTimeoutRef.current);
+  //     }
+  //     if (pageChangeTimeoutRef.current) {
+  //       clearTimeout(pageChangeTimeoutRef.current);
+  //     }
+  //   };
+  // }, []);
+
   const validateAndLoadBook = async () => {
     try {
       console.log('Validating book URL:', book.downloadURL);
-      
+
       if (!book.downloadURL) {
         setError('No download URL found for this book');
         setLoading(false);
@@ -94,20 +120,21 @@ const ReadingScreen = ({ route, navigation }) => {
   const saveProgress = async (progressValue, page) => {
     if (user?.uid && book?.id && !saving && progressValue >= 0) {
       setSaving(true);
-      
+
       try {
         console.log('Saving progress:', progressValue, 'page:', page);
         const result = await saveReadingProgress(
-          user.uid, 
-          book.id, 
-          progressValue, 
-          page, 
-          totalPages
+          user.uid,
+          book.id,
+          progressValue,
+          page,
+          totalPages,
         );
-        
+
         if (result.success) {
           setSnackbarMessage('Progress saved');
           setSnackbarVisible(true);
+          clientQuery.invalidateQueries(['library', 'userStats']);
         } else {
           console.error('Failed to save progress:', result.error);
         }
@@ -120,12 +147,37 @@ const ReadingScreen = ({ route, navigation }) => {
   };
 
   const handleLoadComplete = (numberOfPages, filePath) => {
-    console.log('PDF loaded successfully. Pages:', numberOfPages, 'Path:', filePath);
+    console.log(
+      'PDF loaded successfully. Pages:',
+      numberOfPages,
+      'Path:',
+      filePath,
+    );
     setTotalPages(numberOfPages);
     setLoading(false);
     setError(null);
     setRetryCount(0);
   };
+
+  // const handlePageChanged = (page, numberOfPages) => {
+  //   // Debounce page changes to prevent too frequent updates
+  //   if (pageChangeTimeoutRef.current) {
+  //     clearTimeout(pageChangeTimeoutRef.current);
+  //   }
+
+  //   // Only update if page actually changed and enough time has passed
+  //   const now = Date.now();
+  //   if (page !== currentPage && now - lastPageChangeRef.current > 100) {
+  //     pageChangeTimeoutRef.current = setTimeout(() => {
+  //       console.log('Page changed to:', page, 'of', numberOfPages);
+  //       setCurrentPage(page);
+  //       if (numberOfPages && numberOfPages !== totalPages) {
+  //         setTotalPages(numberOfPages);
+  //       }
+  //       lastPageChangeRef.current = now;
+  //     }, 150); // Debounce by 150ms
+  //   }
+  // };
 
   const handlePageChanged = (page, numberOfPages) => {
     console.log('Page changed to:', page, 'of', numberOfPages);
@@ -135,25 +187,32 @@ const ReadingScreen = ({ route, navigation }) => {
     }
   };
 
-  const handlePdfError = (error) => {
+  const handlePdfError = error => {
     console.error('PDF Error:', error);
     setLoading(false);
-    
+
     // Handle specific SSL certificate error
     if (error.message && error.message.includes('trust manager')) {
-      setError('SSL Certificate Error: Unable to verify the secure connection. This is a known issue with some Android devices.');
-    } else if (error.message && error.message.includes('Network request failed')) {
-      setError('Network Error: Please check your internet connection and try again.');
+      setError(
+        'SSL Certificate Error: Unable to verify the secure connection. This is a known issue with some Android devices.',
+      );
+    } else if (
+      error.message &&
+      error.message.includes('Network request failed')
+    ) {
+      setError(
+        'Network Error: Please check your internet connection and try again.',
+      );
     } else {
       setError(`Failed to load PDF: ${error.message || 'Unknown error'}`);
     }
   };
 
-  const handleLoadProgress = (percent) => {
+  const handleLoadProgress = percent => {
     console.log('PDF Loading progress:', Math.round(percent * 100) + '%');
   };
 
-  const goToPage = (page) => {
+  const goToPage = page => {
     if (page >= 1 && page <= totalPages) {
       setCurrentPage(page);
     }
@@ -164,7 +223,7 @@ const ReadingScreen = ({ route, navigation }) => {
     setLoading(true);
     setError(null);
     setValidatingURL(true);
-    
+
     // Add a small delay before retrying
     setTimeout(() => {
       validateAndLoadBook();
@@ -177,36 +236,39 @@ const ReadingScreen = ({ route, navigation }) => {
       'This will show the download URL for debugging purposes.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Show URL', 
+        {
+          text: 'Show URL',
           onPress: () => {
             Alert.alert('Download URL', book.downloadURL);
-          }
-        }
-      ]
+          },
+        },
+      ],
     );
   };
 
   const renderPdfReader = () => {
     console.log('Rendering PDF with URL:', book.downloadURL);
     console.log('Retry count:', retryCount);
-    
+
     // Create a modified URL for retry attempts
-    const modifiedUrl = retryCount > 0 
-      ? `${book.downloadURL}${book.downloadURL.includes('?') ? '&' : '?'}_retry=${retryCount}`
-      : book.downloadURL;
-    
+    const modifiedUrl =
+      retryCount > 0
+        ? `${book.downloadURL}${
+            book.downloadURL.includes('?') ? '&' : '?'
+          }_retry=${retryCount}`
+        : book.downloadURL;
+
     return (
       <Pdf
         key={`pdf-${retryCount}`} // Force re-render on retry
-        source={{ 
+        source={{
           uri: modifiedUrl,
           cache: false,
           headers: {
-            'Accept': 'application/pdf',
+            Accept: 'application/pdf',
             'User-Agent': 'ReactNative PDF Reader',
-            'Cache-Control': 'no-cache'
-          }
+            'Cache-Control': 'no-cache',
+          },
         }}
         onLoadComplete={handleLoadComplete}
         onPageChanged={handlePageChanged}
@@ -241,16 +303,66 @@ const ReadingScreen = ({ route, navigation }) => {
     );
   };
 
+  // const renderPdfReader = () => {
+  //   console.log('Rendering PDF with URL:', book.downloadURL);
+  //   console.log('Retry count:', retryCount);
+
+  //   // Create a modified URL for retry attempts
+  //   const modifiedUrl = retryCount > 0
+  //     ? `${book.downloadURL}${book.downloadURL.includes('?') ? '&' : '?'}_retry=${retryCount}`
+  //     : book.downloadURL;
+
+  //   return (
+  //     <Pdf
+  //       key={`pdf-${retryCount}`}
+  //       source={{
+  //         uri: modifiedUrl,
+  //         cache: true, // CHANGED: Enable caching to reduce memory pressure
+  //         headers: {
+  //           'Accept': 'application/pdf',
+  //           'User-Agent': 'ReactNative PDF Reader'
+  //           // REMOVED: Cache-Control no-cache to allow caching
+  //         }
+  //       }}
+  //       onLoadComplete={handleLoadComplete}
+  //       onPageChanged={handlePageChanged}
+  //       onError={handlePdfError}
+  //       onLoadProgress={handleLoadProgress}
+  //       style={styles.pdf}
+  //       trustAllCerts={false}
+  //       page={currentPage}
+  //       horizontal={false}
+  //       spacing={2} // CHANGED: Add small spacing to reduce rendering conflicts
+  //       scale={1.0}
+  //       minScale={0.75} // CHANGED: Slightly higher min scale
+  //       maxScale={2.5} // CHANGED: Lower max scale to reduce memory usage
+  //       fitPolicy={0}
+  //       enablePaging={true}
+  //       enableRTL={false}
+  //       enableAnnotationRendering={false}
+  //       scrollEnabled={false}
+  //       showsHorizontalScrollIndicator={false}
+  //       showsVerticalScrollIndicator={true} // CHANGED: Enable vertical scroll indicator
+  //       enableDoubleTapZoom={true} // CHANGED: Enable zoom but with limited range
+  //       singlePage={true}
+  //       // REMOVED: Many props that could cause conflicts
+  //       renderActivityIndicator={() => (
+  //         <View style={styles.loadingContainer}>
+  //           <LoadingSpinner message="Loading PDF content..." />
+  //         </View>
+  //       )}
+  //     />
+  //   );
+  // };
+
   const renderEpubReader = () => (
     <View style={styles.epubContainer}>
       <Card style={styles.mockReader}>
         <Card.Content>
-          <Text style={styles.mockText}>
-            EPUB Reader Component
-          </Text>
+          <Text style={styles.mockText}>EPUB Reader Component</Text>
           <Text style={styles.mockSubText}>
-            This is a placeholder for the EPUB reader.
-            EPUB files are not yet supported in this version.
+            This is a placeholder for the EPUB reader. EPUB files are not yet
+            supported in this version.
           </Text>
           <View style={styles.mockControls}>
             <Button
@@ -333,36 +445,42 @@ const ReadingScreen = ({ route, navigation }) => {
             <Text style={styles.pageInfo}>Error loading document</Text>
           </View>
         </View>
-        
+
         <View style={styles.errorContainer}>
           <Card style={styles.errorCard}>
             <Card.Content style={styles.errorContent}>
               <Text style={styles.errorText}>{error}</Text>
-              
+
               {error.includes('SSL Certificate') && (
                 <View style={styles.sslWarning}>
                   <Text style={styles.sslWarningText}>
                     This is a common Android SSL issue. Try the following:
                   </Text>
-                  <Text style={styles.sslWarningItem}>• Check your internet connection</Text>
-                  <Text style={styles.sslWarningItem}>• Try again in a few moments</Text>
-                  <Text style={styles.sslWarningItem}>• Restart the app if the issue persists</Text>
+                  <Text style={styles.sslWarningItem}>
+                    • Check your internet connection
+                  </Text>
+                  <Text style={styles.sslWarningItem}>
+                    • Try again in a few moments
+                  </Text>
+                  <Text style={styles.sslWarningItem}>
+                    • Restart the app if the issue persists
+                  </Text>
                 </View>
               )}
-              
+
               <View style={styles.errorButtons}>
-                <Button 
-                  mode="contained" 
+                <Button
+                  mode="contained"
                   onPress={handleRetry}
                   style={styles.retryButton}
                   icon="refresh"
                 >
                   Retry {retryCount > 0 ? `(${retryCount + 1})` : ''}
                 </Button>
-                
+
                 {__DEV__ && (
-                  <Button 
-                    mode="outlined" 
+                  <Button
+                    mode="outlined"
                     onPress={handleOpenInBrowser}
                     style={styles.debugButton}
                     icon="bug"
@@ -370,9 +488,9 @@ const ReadingScreen = ({ route, navigation }) => {
                     Debug Info
                   </Button>
                 )}
-                
-                <Button 
-                  mode="text" 
+
+                <Button
+                  mode="text"
                   onPress={() => navigation.goBack()}
                   style={styles.backButtonError}
                 >
@@ -408,14 +526,14 @@ const ReadingScreen = ({ route, navigation }) => {
   //           style={styles.actionButton}
   //         />
   //       </View>
-        
+
   //       <View style={styles.loadingContainer}>
   //         <LoadingSpinner message="Loading your book..." />
   //         <Text style={styles.loadingSubText}>
   //           This may take a moment for large files
   //         </Text>
   //       </View>
-        
+
   //       {/* Start loading the PDF in background */}
   //       <View style={styles.hiddenPdf}>
   //         {book.fileType?.includes('pdf') ? renderPdfReader() : renderEpubReader()}
@@ -442,12 +560,7 @@ const ReadingScreen = ({ route, navigation }) => {
         </View>
         <View style={styles.headerActions}>
           <IconButton
-            icon="bookmark"
-            onPress={() => Alert.alert('Bookmark', `Page ${currentPage} bookmarked!`)}
-            style={styles.actionButton}
-          />
-          <IconButton
-            icon={saving ? "loading" : "cloud-upload"}
+            icon={saving ? 'loading' : 'cloud-upload'}
             onPress={() => saveProgress(progress, currentPage)}
             disabled={saving}
             style={styles.actionButton}
@@ -455,14 +568,16 @@ const ReadingScreen = ({ route, navigation }) => {
         </View>
       </View>
 
-      <ProgressBar 
-        progress={progress} 
+      <ProgressBar
+        progress={progress}
         color={getProgressColor()}
         style={styles.progressBar}
       />
 
       <View style={styles.readerContainer}>
-        {book.fileType?.includes('pdf') ? renderPdfReader() : renderEpubReader()}
+        {book.fileType?.includes('pdf')
+          ? renderPdfReader()
+          : renderEpubReader()}
       </View>
 
       <View style={styles.controls}>
@@ -473,16 +588,14 @@ const ReadingScreen = ({ route, navigation }) => {
           style={styles.navButton}
           mode="contained-tonal"
         />
-        
+
         <View style={styles.pageControls}>
-          <Text style={styles.progressText}>
-            {formatProgress()}% Complete
-          </Text>
+          <Text style={styles.progressText}>{formatProgress()}% Complete</Text>
           <Text style={styles.pageText}>
             {currentPage} / {totalPages}
           </Text>
         </View>
-        
+
         <IconButton
           icon="chevron-right"
           onPress={() => goToPage(currentPage + 1)}
@@ -565,6 +678,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
+    // paddingHorizontal:10,
   },
   loadingSubText: {
     marginTop: 16,
