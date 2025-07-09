@@ -1,5 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, Alert, Dimensions, Platform } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  Alert,
+  Dimensions,
+  Platform,
+  ScrollView,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import {
@@ -11,8 +18,6 @@ import {
   Snackbar,
 } from 'react-native-paper';
 import Pdf from 'react-native-pdf';
-import { Reader, ReaderProvider } from '@epubjs-react-native/core';
-import { useFileSystem } from '@epubjs-react-native/file-system';
 import { useAuthState } from '../services/authService';
 import {
   saveReadingProgress,
@@ -20,6 +25,8 @@ import {
 } from '../services/firestoreService';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useQueryClient } from '@tanstack/react-query';
+import { unzip } from 'react-native-zip-archive';
+import RNFS from 'react-native-fs';
 import { incrementBookViewCount } from '../services/firestoreService';
 
 const { width, height } = Dimensions.get('window');
@@ -43,17 +50,37 @@ const ReadingScreen = ({ route, navigation }) => {
   const saveTimeoutRef = useRef(null);
   const pageChangeTimeoutRef = useRef(null);
   const lastPageChangeRef = useRef(0);
+  const [epubContent, setEpubContent] = useState('');
+  const [chapters, setChapters] = useState([]);
+  const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [epubHtml, setEpubHtml] = useState('');
+  const [epubData, setEpubData] = useState(null);
+  const [downloadingEpub, setDownloadingEpub] = useState(false);
+  const webviewRef = useRef(null);
 
   useEffect(() => {
     console.log('ReadingScreen mounted with book:', book);
     validateAndLoadBook();
   }, []);
 
-  // useEffect(() => {
-  //   if (book?.id && !validatingURL && !error) {
-  //     incrementBookViewCount(book.id);
-  //   }
-  // }, [book?.id, validatingURL, error]);
+  useEffect(() => {
+    if (book.fileType?.includes('epub')) {
+      generateEpubHtml();
+    }
+  }, [book]);
+
+  useEffect(() => {
+    if (epubData && webviewRef.current) {
+      console.log('Sending EPUB data to WebView...');
+      setTimeout(() => {
+        sendMessageToWebView({
+          type: 'loadEpubData',
+          epubData: epubData,
+        });
+      }, 1000);
+    }
+  }, [epubData]);
 
   useEffect(() => {
     if (totalPages > 0 && currentPage > 0) {
@@ -134,8 +161,14 @@ const ReadingScreen = ({ route, navigation }) => {
       }
 
       // For EPUB files, we need additional setup
+      // if (book.fileType?.includes('epub')) {
+      //   setEpubReady(true);
+      // }
       if (book.fileType?.includes('epub')) {
-        setEpubReady(true);
+        // Download EPUB file first
+        downloadEpubFile();
+      } else {
+        setLoading(false);
       }
 
       setLoading(false);
@@ -283,11 +316,11 @@ const ReadingScreen = ({ route, navigation }) => {
     console.log('PDF Loading progress:', Math.round(percent * 100) + '%');
   };
 
-  const goToPage = page => {
-    if (page >= 1 && page <= totalPages) {
-      setCurrentPage(page);
-    }
-  };
+  // const goToPage = page => {
+  //   if (page >= 1 && page <= totalPages) {
+  //     setCurrentPage(page);
+  //   }
+  // };
 
   const handleRetry = () => {
     setRetryCount(prev => prev + 1);
@@ -480,165 +513,712 @@ const ReadingScreen = ({ route, navigation }) => {
   //   </View>
   // );
 
-const renderEpubReader = () => {
-  // Don't render EPUB until progress is loaded
-  if (!progressLoaded || !epubReady) {
+  const downloadEpubFile = async () => {
+    if (!book.downloadURL) return;
+
+    setDownloadingEpub(true);
+    setLoading(true);
+
+    try {
+      console.log('Downloading EPUB file...');
+
+      const response = await fetch(book.downloadURL);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      console.log(
+        'EPUB downloaded successfully:',
+        arrayBuffer.byteLength,
+        'bytes',
+      );
+
+      // Convert ArrayBuffer to base64 string for WebView using chunked approach
+      const uint8Array = new Uint8Array(arrayBuffer);
+      console.log('Converting to base64 in chunks...');
+
+      // Convert to base64 in chunks to avoid call stack overflow
+      const base64String = arrayBufferToBase64(uint8Array);
+
+      setEpubData({
+        base64: base64String,
+        size: arrayBuffer.byteLength,
+        url: book.downloadURL,
+      });
+
+      console.log(
+        'EPUB converted to base64 successfully, length:',
+        base64String.length,
+      );
+    } catch (error) {
+      console.error('EPUB download failed:', error);
+      setError(`Failed to download EPUB: ${error.message}`);
+      setLoading(false);
+    } finally {
+      setDownloadingEpub(false);
+    }
+  };
+
+  // Add this new helper function for chunked base64 conversion:
+  const arrayBufferToBase64 = uint8Array => {
+    try {
+      const chunkSize = 8192; // Process 8KB at a time
+      let result = '';
+
+      for (let i = 0; i < uint8Array.length; i += chunkSize) {
+        const chunk = uint8Array.slice(i, i + chunkSize);
+        const chunkString = String.fromCharCode.apply(null, chunk);
+        result += chunkString;
+      }
+
+      return btoa(result);
+    } catch (error) {
+      console.error('Base64 conversion error:', error);
+      throw new Error('Failed to convert file to base64: ' + error.message);
+    }
+  };
+
+  const generateEpubHtml = () => {
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>EPUB Reader</title>
+          <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+          <style>
+              body {
+                  margin: 0;
+                  padding: 0;
+                  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                  background-color: #fff;
+                  overflow-x: hidden;
+              }
+              .loading-container {
+                  display: flex;
+                  justify-content: center;
+                  align-items: center;
+                  height: 100vh;
+                  flex-direction: column;
+              }
+              .status {
+                  font-size: 16px;
+                  color: #666;
+                  margin-bottom: 20px;
+                  text-align: center;
+                  padding: 0 20px;
+              }
+              .error {
+                  color: #d32f2f;
+                  background: #ffebee;
+                  padding: 15px;
+                  border-radius: 8px;
+                  margin: 10px 20px;
+                  text-align: center;
+              }
+              .epub-reader {
+                  display: none;
+                  height: 100vh;
+                  flex-direction: column;
+              }
+              .epub-content {
+                  flex: 1;
+                  padding: 20px;
+                  overflow-y: auto;
+                  line-height: 1.6;
+                  font-size: 16px;
+                  color: #333;
+                  background: #fff;
+              }
+              .epub-content h1, .epub-content h2, .epub-content h3 {
+                  color: #2c3e50;
+                  margin-top: 30px;
+                  margin-bottom: 15px;
+              }
+              .epub-content p {
+                  margin-bottom: 15px;
+                  text-align: justify;
+              }
+              .epub-content img {
+                  max-width: 100%;
+                  height: auto;
+                  display: block;
+                  margin: 20px auto;
+              }
+              .nav-controls {
+                  background: #f8f9fa;
+                  padding: 15px;
+                  border-top: 1px solid #dee2e6;
+                  display: flex;
+                  justify-content: space-between;
+                  align-items: center;
+                  flex-shrink: 0;
+              }
+              .nav-button {
+                  background: #6200EE;
+                  color: white;
+                  border: none;
+                  padding: 10px 20px;
+                  border-radius: 6px;
+                  cursor: pointer;
+                  font-size: 14px;
+                  min-width: 80px;
+              }
+              .nav-button:hover {
+                  background: #5500DD;
+              }
+              .nav-button:disabled {
+                  background: #ccc;
+                  cursor: not-allowed;
+              }
+              .page-info {
+                  font-size: 14px;
+                  color: #666;
+                  font-weight: 500;
+              }
+              .chapter-title {
+                  background: #e3f2fd;
+                  padding: 10px 15px;
+                  margin: -20px -20px 20px -20px;
+                  border-bottom: 2px solid #2196F3;
+                  font-weight: bold;
+                  color: #1976d2;
+                  font-size: 18px;
+              }
+              .loading-spinner {
+                  width: 40px;
+                  height: 40px;
+                  border: 4px solid #f3f3f3;
+                  border-top: 4px solid #6200EE;
+                  border-radius: 50%;
+                  animation: spin 1s linear infinite;
+                  margin-bottom: 20px;
+              }
+              @keyframes spin {
+                  0% { transform: rotate(0deg); }
+                  100% { transform: rotate(360deg); }
+              }
+          </style>
+      </head>
+      <body>
+          <div id="loading-container" class="loading-container">
+              <div class="loading-spinner"></div>
+              <div id="status" class="status">Ready to load EPUB...</div>
+          </div>
+          
+          <div id="epub-reader" class="epub-reader">
+              <div id="epub-content" class="epub-content">
+                  <!-- EPUB content will be displayed here -->
+              </div>
+              <div class="nav-controls">
+                  <button id="prev-btn" class="nav-button" onclick="previousChapter()">Previous</button>
+                  <div id="page-info" class="page-info">Chapter 1 of 1</div>
+                  <button id="next-btn" class="nav-button" onclick="nextChapter()">Next</button>
+              </div>
+          </div>
+  
+          <script>
+              let epubData = null;
+              let chapters = [];
+              let currentChapterIndex = 0;
+              let bookTitle = '';
+              let zip = null;
+              
+              function log(message) {
+                  console.log(message);
+                  sendMessage('log', message);
+              }
+              
+              function sendMessage(type, data) {
+                  try {
+                      window.ReactNativeWebView?.postMessage(JSON.stringify({
+                          type: type,
+                          data: data,
+                          timestamp: Date.now()
+                      }));
+                  } catch (e) {
+                      console.error('Failed to send message:', e);
+                  }
+              }
+              
+              function updateStatus(message, isError = false) {
+                  const statusEl = document.getElementById('status');
+                  if (statusEl) {
+                      statusEl.textContent = message;
+                      statusEl.className = isError ? 'status error' : 'status';
+                  }
+                  log(message);
+              }
+              
+              function showError(message) {
+                  const container = document.getElementById('loading-container');
+                  container.innerHTML = '<div class="error">' + message + '</div>';
+                  sendMessage('error', message);
+              }
+              
+              function base64ToArrayBuffer(base64) {
+                  try {
+                      const binaryString = atob(base64);
+                      const bytes = new Uint8Array(binaryString.length);
+                      for (let i = 0; i < binaryString.length; i++) {
+                          bytes[i] = binaryString.charCodeAt(i);
+                      }
+                      return bytes.buffer;
+                  } catch (error) {
+                      console.error('Error converting base64 to ArrayBuffer:', error);
+                      throw error;
+                  }
+              }
+              
+              async function processEpubData(data) {
+                  try {
+                      updateStatus('Processing EPUB data...');
+                      
+                      // Convert base64 back to ArrayBuffer
+                      const arrayBuffer = base64ToArrayBuffer(data.base64);
+                      log('Converted base64 to ArrayBuffer: ' + arrayBuffer.byteLength + ' bytes');
+                      
+                      // Load the EPUB with JSZip
+                      updateStatus('Extracting EPUB archive...');
+                      zip = await JSZip.loadAsync(arrayBuffer);
+                      log('EPUB archive loaded successfully');
+                      
+                      // Parse EPUB structure
+                      await parseEpubStructure();
+                      
+                      // Display first chapter
+                      await displayChapter(0);
+                      
+                      // Show the reader interface
+                      document.getElementById('loading-container').style.display = 'none';
+                      document.getElementById('epub-reader').style.display = 'flex';
+                      
+                      // Send success message
+                      sendMessage('epub_loaded', {
+                          size: data.size,
+                          pages: chapters.length,
+                          currentPage: 1,
+                          title: bookTitle
+                      });
+                      
+                      log('EPUB processing completed successfully');
+                      
+                  } catch (error) {
+                      log('Error processing EPUB: ' + error.message);
+                      showError('Failed to process EPUB: ' + error.message);
+                  }
+              }
+              
+              async function parseEpubStructure() {
+                  try {
+                      updateStatus('Parsing EPUB structure...');
+                      
+                      // Find and parse the container.xml
+                      const containerFile = zip.file('META-INF/container.xml');
+                      if (!containerFile) {
+                          throw new Error('Invalid EPUB: No container.xml found');
+                      }
+                      
+                      const containerXml = await containerFile.async('text');
+                      const containerDoc = new DOMParser().parseFromString(containerXml, 'text/xml');
+                      
+                      // Get the OPF file path
+                      const opfPath = containerDoc.querySelector('rootfile').getAttribute('full-path');
+                      log('Found OPF file: ' + opfPath);
+                      
+                      // Parse the OPF file
+                      const opfFile = zip.file(opfPath);
+                      if (!opfFile) {
+                          throw new Error('OPF file not found: ' + opfPath);
+                      }
+                      
+                      const opfXml = await opfFile.async('text');
+                      const opfDoc = new DOMParser().parseFromString(opfXml, 'text/xml');
+                      
+                      // Get book title
+                      const titleElement = opfDoc.querySelector('title');
+                      bookTitle = titleElement ? titleElement.textContent : 'Unknown Title';
+                      log('Book title: ' + bookTitle);
+                      
+                      // Get the base path for content files
+                      const basePath = opfPath.substring(0, opfPath.lastIndexOf('/') + 1);
+                      
+                      // Parse the spine (reading order)
+                      const spineItems = opfDoc.querySelectorAll('spine itemref');
+                      const manifestItems = opfDoc.querySelectorAll('manifest item');
+                      
+                      // Create a map of manifest items
+                      const manifestMap = {};
+                      manifestItems.forEach(item => {
+                          manifestMap[item.getAttribute('id')] = {
+                              href: item.getAttribute('href'),
+                              mediaType: item.getAttribute('media-type')
+                          };
+                      });
+                      
+                      // Build chapters array from spine
+                      chapters = [];
+                      for (let i = 0; i < spineItems.length; i++) {
+                          const itemref = spineItems[i];
+                          const idref = itemref.getAttribute('idref');
+                          const manifestItem = manifestMap[idref];
+                          
+                          if (manifestItem && manifestItem.mediaType === 'application/xhtml+xml') {
+                              const chapterPath = basePath + manifestItem.href;
+                              log('Found chapter: ' + chapterPath);
+                              chapters.push({
+                                  path: chapterPath,
+                                  title: 'Chapter ' + (i + 1),
+                                  index: i
+                              });
+                          }
+                      }
+                      
+                      log('Found ' + chapters.length + ' chapters');
+                      
+                      if (chapters.length === 0) {
+                          throw new Error('No readable chapters found in EPUB');
+                      }
+                      
+                  } catch (error) {
+                      log('Error parsing EPUB structure: ' + error.message);
+                      throw error;
+                  }
+              }
+              
+              async function displayChapter(chapterIndex) {
+                  try {
+                      if (chapterIndex < 0 || chapterIndex >= chapters.length) {
+                          return;
+                      }
+                      
+                      currentChapterIndex = chapterIndex;
+                      const chapter = chapters[chapterIndex];
+                      
+                      updateStatus('Loading chapter: ' + chapter.title);
+                      log('Displaying chapter: ' + chapter.path);
+                      
+                      // Get the chapter file
+                      const chapterFile = zip.file(chapter.path);
+                      if (!chapterFile) {
+                          throw new Error('Chapter file not found: ' + chapter.path);
+                      }
+                      
+                      // Read the chapter content
+                      const chapterHtml = await chapterFile.async('text');
+                      
+                      // Parse and clean the HTML
+                      const doc = new DOMParser().parseFromString(chapterHtml, 'text/html');
+                      const body = doc.body || doc.documentElement;
+                      
+                      // Extract text content and basic formatting
+                      let cleanContent = '';
+                      
+                      if (body) {
+                          // Get the title from h1, h2, or first heading
+                          const heading = body.querySelector('h1, h2, h3, title');
+                          const chapterTitle = heading ? heading.textContent.trim() : chapter.title;
+                          
+                          // Add chapter title
+                          cleanContent += '<div class="chapter-title">' + escapeHtml(chapterTitle) + '</div>';
+                          
+                          // Process content elements
+                          const elements = body.querySelectorAll('p, div, h1, h2, h3, h4, h5, h6');
+                          
+                          elements.forEach(el => {
+                              const text = el.textContent.trim();
+                              if (text.length > 0) {
+                                  const tagName = el.tagName.toLowerCase();
+                                  if (tagName.startsWith('h')) {
+                                      cleanContent += '<' + tagName + '>' + escapeHtml(text) + '</' + tagName + '>';
+                                  } else {
+                                      cleanContent += '<p>' + escapeHtml(text) + '</p>';
+                                  }
+                              }
+                          });
+                          
+                          // If no content found, try to get all text
+                          if (cleanContent === '<div class="chapter-title">' + escapeHtml(chapterTitle) + '</div>') {
+                              const allText = body.textContent.trim();
+                              if (allText.length > 0) {
+                                  // Split into paragraphs
+                                  const paragraphs = allText.split(/\\n\\s*\\n/);
+                                  paragraphs.forEach(para => {
+                                      const trimmed = para.trim();
+                                      if (trimmed.length > 0) {
+                                          cleanContent += '<p>' + escapeHtml(trimmed) + '</p>';
+                                      }
+                                  });
+                              }
+                          }
+                      }
+                      
+                      // Display the content
+                      document.getElementById('epub-content').innerHTML = cleanContent;
+                      
+                      // Update navigation
+                      updateNavigation();
+                      
+                      // Scroll to top
+                      document.getElementById('epub-content').scrollTop = 0;
+                      
+                      // Send chapter change notification
+                      sendMessage('chapter_changed', {
+                          chapter: chapterIndex + 1,
+                          total: chapters.length,
+                          title: chapter.title
+                      });
+                      
+                      log('Chapter displayed successfully');
+                      
+                  } catch (error) {
+                      log('Error displaying chapter: ' + error.message);
+                      showError('Error loading chapter: ' + error.message);
+                  }
+              }
+              
+              function escapeHtml(unsafe) {
+                  return unsafe
+                      .replace(/&/g, "&amp;")
+                      .replace(/</g, "&lt;")
+                      .replace(/>/g, "&gt;")
+                      .replace(/"/g, "&quot;")
+                      .replace(/'/g, "&#039;");
+              }
+              
+              function updateNavigation() {
+                  const pageInfo = document.getElementById('page-info');
+                  const prevBtn = document.getElementById('prev-btn');
+                  const nextBtn = document.getElementById('next-btn');
+                  
+                  pageInfo.textContent = 'Chapter ' + (currentChapterIndex + 1) + ' of ' + chapters.length;
+                  
+                  prevBtn.disabled = currentChapterIndex <= 0;
+                  nextBtn.disabled = currentChapterIndex >= chapters.length - 1;
+              }
+              
+              function previousChapter() {
+                  if (currentChapterIndex > 0) {
+                      displayChapter(currentChapterIndex - 1);
+                  }
+              }
+              
+              function nextChapter() {
+                  if (currentChapterIndex < chapters.length - 1) {
+                      displayChapter(currentChapterIndex + 1);
+                  }
+              }
+              
+              function goToChapter(chapterIndex) {
+                  if (chapterIndex >= 0 && chapterIndex < chapters.length) {
+                      displayChapter(chapterIndex);
+                  }
+              }
+              
+              function handleMessage(data) {
+                  log('Received message: ' + JSON.stringify(data));
+                  
+                  switch(data.type) {
+                      case 'loadEpubData':
+                          epubData = data.epubData;
+                          processEpubData(epubData);
+                          break;
+                      case 'goToPage':
+                          goToChapter(data.page - 1);
+                          break;
+                      case 'goNext':
+                          nextChapter();
+                          break;
+                      case 'goPrev':
+                          previousChapter();
+                          break;
+                      case 'test':
+                          log('Test message received');
+                          break;
+                  }
+              }
+              
+              // Listen for messages
+              document.addEventListener('message', function(event) {
+                  try {
+                      const data = JSON.parse(event.data);
+                      handleMessage(data);
+                  } catch (e) {
+                      log('Message parse error: ' + e.message);
+                  }
+              });
+              
+              window.addEventListener('message', function(event) {
+                  try {
+                      const data = JSON.parse(event.data);
+                      handleMessage(data);
+                  } catch (e) {
+                      log('Message parse error: ' + e.message);
+                  }
+              });
+              
+              // Initialize
+              setTimeout(() => {
+                  log('EPUB Reader initialized and ready');
+                  updateStatus('Ready to receive EPUB data from React Native');
+              }, 500);
+              
+          </script>
+      </body>
+      </html>
+    `;
+    
+    setEpubHtml(html);
+  };
+  
+  // Update your handleWebViewMessage function to handle the new messages:
+  const handleWebViewMessage = (event) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+      console.log('WebView message received:', data);
+      
+      switch (data.type) {
+        case 'log':
+          console.log('[WebView]', data.data);
+          break;
+          
+        case 'epub_loaded':
+          console.log('EPUB loaded successfully:', data.data);
+          setLoading(false);
+          setEpubReady(true);
+          setTotalPages(data.data.pages || 1);
+          setCurrentPage(data.data.currentPage || 1);
+          // Update book title if available
+          if (data.data.title) {
+            console.log('Book title from EPUB:', data.data.title);
+          }
+          break;
+          
+        case 'chapter_changed':
+          console.log('Chapter changed:', data.data);
+          setCurrentPage(data.data.chapter);
+          setTotalPages(data.data.total);
+          break;
+          
+        case 'error':
+          console.error('WebView error:', data.data);
+          setError(`EPUB Error: ${data.data}`);
+          setLoading(false);
+          break;
+          
+        default:
+          console.log('Unknown WebView message:', data);
+      }
+    } catch (error) {
+      console.error('Error parsing WebView message:', error);
+    }
+  };
+
+  const sendMessageToWebView = message => {
+    if (webviewRef.current) {
+      webviewRef.current.postMessage(JSON.stringify(message));
+    }
+  };
+
+  const goToPageEpub = page => {
+    sendMessageToWebView({
+      type: 'goToPage',
+      page: page,
+    });
+  };
+
+  const goNextEpub = () => {
+    sendMessageToWebView({
+      type: 'goNext',
+    });
+  };
+
+  const goPrevEpub = () => {
+    sendMessageToWebView({
+      type: 'goPrev',
+    });
+  };
+
+  const renderEpubReader = () => {
+    if (!epubHtml) {
+      return (
+        <View style={styles.loadingContainer}>
+          <LoadingSpinner message="Preparing EPUB reader..." />
+        </View>
+      );
+    }
+
+    const htmlWithUrl = epubHtml.replace(
+      'if (window.epubUrl) {',
+      `window.epubUrl = "${book.downloadURL}";
+       if (window.epubUrl) {`,
+    );
+
     return (
-      <View style={styles.loadingContainer}>
-        <LoadingSpinner message="Loading EPUB reader..." />
+      <View style={styles.epubReaderContainer}>
+        <WebView
+          ref={webviewRef}
+          source={{ html: htmlWithUrl }}
+          style={styles.webview}
+          onMessage={handleWebViewMessage}
+          javaScriptEnabled={true}
+          domStorageEnabled={true}
+          startInLoadingState={false}
+          allowsInlineMediaPlayback={true}
+          mediaPlaybackRequiresUserAction={false}
+          originWhitelist={['*']}
+          allowUniversalAccessFromFileURLs={true}
+          allowFileAccessFromFileURLs={true}
+          mixedContentMode="compatibility"
+          onError={syntheticEvent => {
+            const { nativeEvent } = syntheticEvent;
+            console.error('WebView error: ', nativeEvent);
+            setError(`WebView error: ${nativeEvent.description}`);
+            setLoading(false);
+          }}
+          onHttpError={syntheticEvent => {
+            const { nativeEvent } = syntheticEvent;
+            console.error('WebView HTTP error: ', nativeEvent);
+            setError(`HTTP error: ${nativeEvent.statusCode}`);
+            setLoading(false);
+          }}
+          onLoadStart={() => {
+            console.log('WebView load started');
+          }}
+          onLoadEnd={() => {
+            console.log('WebView load ended');
+            if (epubData) {
+              setTimeout(() => {
+                sendMessageToWebView({
+                  type: 'loadEpubData',
+                  epubData: epubData,
+                });
+              }, 1000);
+            }
+          }}
+        />
+
+        {loading && (
+          <View style={styles.loadingOverlay}>
+            <LoadingSpinner message="Loading EPUB content..." />
+          </View>
+        )}
       </View>
     );
-  }
+  };
 
-  return (
-    <View style={styles.epubReaderContainer}>
-      <EpubReaderComponent />
-    </View>
-  );
-};
-
-// ADD this new component inside your ReadingScreen component (before the return statement):
-const EpubReaderComponent = () => {
-  const [isReady, setIsReady] = useState(false);
-  const [epubError, setEpubError] = useState(null);
-  const [chapters, setChapters] = useState([]);
-  const [currentChapter, setCurrentChapter] = useState(0);
-
-  return (
-    // <ReaderProvider>
-      <Reader
-        src={book.downloadURL}
-        // width={width}
-        // height={height - 200}
-        fileSystem={useFileSystem}
-        // initialLocation={currentPage > 1 ? `epubcfi(/6/4[chapter-${currentPage}]!)` : undefined}
-        // onReady={() => {
-        //   console.log('EPUB Reader ready');
-        //   setIsReady(true);
-        //   setEpubError(null);
-        // }}
-        // onError={(error) => {
-        //   console.error('EPUB Reader error:', error);
-        //   setEpubError(error.message || 'Failed to load EPUB');
-        // }}
-        // onLocationChange={(location) => {
-        //   console.log('Location changed:', location);
-        //   if (location && location.start) {
-        //     // Extract page info from location
-        //     const newPage = location.start.displayed.page || currentPage;
-        //     const totalPgs = location.start.displayed.total || totalPages;
-            
-        //     if (newPage !== currentPage || totalPgs !== totalPages) {
-        //       setCurrentPage(newPage);
-        //       setTotalPages(totalPgs);
-              
-        //       // Calculate progress
-        //       const newProgress = Math.min(newPage / totalPgs, 1);
-        //       setProgress(newProgress);
-        //     }
-        //   }
-        // }}
-        // onNavigationLoaded={(navigation) => {
-        //   console.log('Navigation loaded:', navigation);
-        //   if (navigation && navigation.toc) {
-        //     setChapters(navigation.toc);
-        //     setTotalPages(navigation.toc.length);
-        //   }
-        // }}
-        // enableSwipe={true}
-        // enableSelection={true}
-        // theme={{
-        //   'body': {
-        //     'color': '#333',
-        //     'background': '#fff',
-        //     'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        //     'font-size': '16px',
-        //     'line-height': '1.6',
-        //     'padding': '20px'
-        //   },
-        //   'h1, h2, h3': {
-        //     'color': '#6200EE',
-        //     'margin-top': '30px',
-        //     'margin-bottom': '15px'
-        //   },
-        //   'p': {
-        //     'margin-bottom': '15px',
-        //     'text-align': 'justify'
-        //   }
-        // }}
-      />
-      
-      // {epubError && (
-      //   <View style={styles.errorContainer}>
-      //     <Card style={styles.errorCard}>
-      //       <Card.Content style={styles.errorContent}>
-      //         <Icon name="error" size={48} color="#d32f2f" />
-      //         <Text style={styles.errorTitle}>EPUB Loading Error</Text>
-      //         <Text style={styles.errorText}>{epubError}</Text>
-              
-      //         <View style={styles.bookInfoCard}>
-      //           <Text style={styles.bookInfoTitle}>📖 Book Information</Text>
-      //           <Text style={styles.bookInfoText}>Title: {book.title}</Text>
-      //           <Text style={styles.bookInfoText}>File: {book.fileName}</Text>
-      //           <Text style={styles.bookInfoText}>Size: {Math.round(book.fileSize / 1024)} KB</Text>
-      //           <Text style={styles.bookInfoText}>Progress: {Math.round((book.progress || 0) * 100)}%</Text>
-      //         </View>
-              
-      //         <View style={styles.alternativeOptions}>
-      //           <Text style={styles.alternativeTitle}>📱 Recommended EPUB Readers:</Text>
-      //           <Text style={styles.alternativeText}>• Apple Books (iOS/Mac)</Text>
-      //           <Text style={styles.alternativeText}>• Google Play Books</Text>
-      //           <Text style={styles.alternativeText}>• Adobe Digital Editions</Text>
-      //           <Text style={styles.alternativeText}>• Kindle App</Text>
-      //           <Text style={styles.alternativeText}>• Moon+ Reader (Android)</Text>
-      //         </View>
-              
-      //         <Button
-      //           mode="contained"
-      //           onPress={() => {
-      //             setEpubError(null);
-      //             setIsReady(false);
-      //           }}
-      //           style={styles.retryButton}
-      //           icon="refresh"
-      //         >
-      //           Try Again
-      //         </Button>
-      //       </Card.Content>
-      //     </Card>
-      //   </View>
-      // )}
-      
-      // {!isReady && !epubError && (
-      //   <View style={styles.loadingOverlay}>
-      //     <LoadingSpinner message="Loading EPUB content..." />
-      //   </View>
-      // )}
-    
-  );
-};
-
-// ALSO ADD these navigation helper functions in your ReadingScreen component:
-const navigateToChapter = (chapterIndex) => {
-  // This would be implemented with the Reader's navigation methods
-  console.log('Navigate to chapter:', chapterIndex);
-};
-
-const goToPreviousChapter = () => {
-  if (currentPage > 1) {
-    const newPage = currentPage - 1;
-    setCurrentPage(newPage);
-    // Reader component should handle the navigation automatically
-  }
-};
-
-const goToNextChapter = () => {
-  if (currentPage < totalPages) {
-    const newPage = currentPage + 1;
-    setCurrentPage(newPage);
-    // Reader component should handle the navigation automatically
-  }
-};
+  // 6. Update the goToPage function to handle both PDF and EPUB:
+  const goToPage = page => {
+    if (page >= 1 && page <= totalPages) {
+      if (book.fileType?.includes('epub')) {
+        goToPageEpub(page);
+      } else {
+        setCurrentPage(page);
+      }
+    }
+  };
 
   const formatProgress = () => {
     return Math.round(progress * 100);
@@ -1046,7 +1626,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
 
-
   epubReaderContainer: {
     flex: 1,
     backgroundColor: '#fff',
@@ -1136,6 +1715,51 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.9)',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  epubTextContainer: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+  contentScrollView: {
+    flex: 1,
+  },
+  contentContainer: {
+    padding: 20,
+    paddingBottom: 100,
+  },
+  chapterTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#6200EE',
+    marginBottom: 20,
+    textAlign: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: '#6200EE',
+    paddingBottom: 10,
+  },
+  chapterContent: {
+    fontSize: 16,
+    lineHeight: 24,
+    color: '#333',
+    textAlign: 'justify',
+  },
+  chapterControls: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 15,
+    backgroundColor: '#f5f5f5',
+    borderTopWidth: 1,
+    borderTopColor: '#ddd',
+  },
+  chapterButton: {
+    flex: 1,
+    marginHorizontal: 5,
+  },
+  chapterInfo: {
+    fontSize: 14,
+    color: '#666',
+    marginHorizontal: 10,
   },
 });
 

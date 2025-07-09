@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.1.5/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
+    <style>
+        body { margin: 0; }
+        #reader {
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden !important;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #666;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">Loading EPUB...</div>
+    <div id="reader" style="display: none;"></div>
+</body>
+<script>
+    window.book = ePub(window.BOOK_PATH);
+    window.rendition = window.book.renderTo(document.getElementById('reader'), {
+        width: '100%',
+        height: '100%'
+    });
+
+    if (window.LOCATIONS) {
+        window.book.locations.load(window.LOCATIONS);
+    } else {
+        window.book.ready.then(() => {
+            return window.book.locations.generate(1650);
+        }).then(() => {
+            window.ReactNativeWebView.postMessage(
+                JSON.stringify({ type: 'locations', locations: window.book.locations.save() })
+            );
+        });
+    }
+
+    window.rendition.on('started', () => {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('reader').style.display = 'block';
+        
+        if (window.BOOK_LOCATION) {
+            window.rendition.display(window.BOOK_LOCATION);
+        } else {
+            window.rendition.display();
+        }
+        
+        if (window.THEME) {
+            window.rendition.themes.register({ theme: window.THEME });
+            window.rendition.themes.select('theme');
+        }
+        
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ready' }));
+    });
+
+    window.book.loaded.metadata.then((metadata) => {
+        window.ReactNativeWebView.postMessage(
+            JSON.stringify({
+                type: 'metadata',
+                title: metadata.title,
+                author: metadata.creator
+            })
+        );
+    });
+
+    window.book.loaded.navigation.then((nav) => {
+        let contents = nav.toc.map(({ href, label }) => {
+            return { href, label: label.trim() };
+        });
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'contents', contents }));
+    });
+
+    window.rendition.on('relocated', (e) => {
+        const currentPage = Math.floor(e.start.location * window.book.locations.length()) + 1;
+        const totalPages = window.book.locations.length();
+        
+        window.ReactNativeWebView.postMessage(
+            JSON.stringify({
+                type: 'locationChange',
+                page: currentPage,
+                totalPages: totalPages,
+                progress: e.start.location
+            })
+        );
+    });
+
+    // Navigation functions
+    window.goNext = () => window.rendition.next();
+    window.goPrev = () => window.rendition.prev();
+    window.goToLocation = (cfi) => window.rendition.display(cfi);
+
+    // Error handling
+    window.book.ready.catch((error) => {
+        window.ReactNativeWebView.postMessage(
+            JSON.stringify({ type: 'error', message: error.message })
+        );
+    });
+</script>
+</html>
