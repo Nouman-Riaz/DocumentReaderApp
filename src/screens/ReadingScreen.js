@@ -812,172 +812,334 @@ const ReadingScreen = ({ route, navigation }) => {
               }
               
               async function parseEpubStructure() {
-                  try {
-                      updateStatus('Parsing EPUB structure...');
-                      
-                      // Find and parse the container.xml
-                      const containerFile = zip.file('META-INF/container.xml');
-                      if (!containerFile) {
-                          throw new Error('Invalid EPUB: No container.xml found');
-                      }
-                      
-                      const containerXml = await containerFile.async('text');
-                      const containerDoc = new DOMParser().parseFromString(containerXml, 'text/xml');
-                      
-                      // Get the OPF file path
-                      const opfPath = containerDoc.querySelector('rootfile').getAttribute('full-path');
-                      log('Found OPF file: ' + opfPath);
-                      
-                      // Parse the OPF file
-                      const opfFile = zip.file(opfPath);
-                      if (!opfFile) {
-                          throw new Error('OPF file not found: ' + opfPath);
-                      }
-                      
-                      const opfXml = await opfFile.async('text');
-                      const opfDoc = new DOMParser().parseFromString(opfXml, 'text/xml');
-                      
-                      // Get book title
-                      const titleElement = opfDoc.querySelector('title');
-                      bookTitle = titleElement ? titleElement.textContent : 'Unknown Title';
-                      log('Book title: ' + bookTitle);
-                      
-                      // Get the base path for content files
-                      const basePath = opfPath.substring(0, opfPath.lastIndexOf('/') + 1);
-                      
-                      // Parse the spine (reading order)
-                      const spineItems = opfDoc.querySelectorAll('spine itemref');
-                      const manifestItems = opfDoc.querySelectorAll('manifest item');
-                      
-                      // Create a map of manifest items
-                      const manifestMap = {};
-                      manifestItems.forEach(item => {
-                          manifestMap[item.getAttribute('id')] = {
-                              href: item.getAttribute('href'),
-                              mediaType: item.getAttribute('media-type')
-                          };
-                      });
-                      
-                      // Build chapters array from spine
-                      chapters = [];
-                      for (let i = 0; i < spineItems.length; i++) {
-                          const itemref = spineItems[i];
-                          const idref = itemref.getAttribute('idref');
-                          const manifestItem = manifestMap[idref];
-                          
-                          if (manifestItem && manifestItem.mediaType === 'application/xhtml+xml') {
-                              const chapterPath = basePath + manifestItem.href;
-                              log('Found chapter: ' + chapterPath);
-                              chapters.push({
-                                  path: chapterPath,
-                                  title: 'Chapter ' + (i + 1),
-                                  index: i
-                              });
-                          }
-                      }
-                      
-                      log('Found ' + chapters.length + ' chapters');
-                      
-                      if (chapters.length === 0) {
-                          throw new Error('No readable chapters found in EPUB');
-                      }
-                      
-                  } catch (error) {
-                      log('Error parsing EPUB structure: ' + error.message);
-                      throw error;
-                  }
-              }
+    try {
+        updateStatus('Parsing EPUB structure...');
+        
+        // Find and parse the container.xml
+        const containerFile = zip.file('META-INF/container.xml');
+        if (!containerFile) {
+            throw new Error('Invalid EPUB: No container.xml found');
+        }
+        
+        const containerXml = await containerFile.async('text');
+        const containerDoc = new DOMParser().parseFromString(containerXml, 'text/xml');
+        
+        // Get the OPF file path
+        const rootfileElement = containerDoc.querySelector('rootfile');
+        if (!rootfileElement) {
+            throw new Error('No rootfile found in container.xml');
+        }
+        
+        const opfPath = rootfileElement.getAttribute('full-path');
+        log('Found OPF file: ' + opfPath);
+        
+        // Parse the OPF file
+        const opfFile = zip.file(opfPath);
+        if (!opfFile) {
+            throw new Error('OPF file not found: ' + opfPath);
+        }
+        
+        const opfXml = await opfFile.async('text');
+        const opfDoc = new DOMParser().parseFromString(opfXml, 'text/xml');
+        
+        // Get book title - use getElementsByTagName for XML namespaced elements
+        let titleElement = null;
+        
+        // Try different ways to get the title
+        try {
+            // Method 1: Try getElementsByTagName for namespaced elements
+            const dcTitles = opfDoc.getElementsByTagName('dc:title');
+            if (dcTitles.length > 0) {
+                titleElement = dcTitles[0];
+            }
+        } catch (e) {
+            log('Method 1 failed: ' + e.message);
+        }
+        
+        if (!titleElement) {
+            try {
+                // Method 2: Try without namespace
+                const titles = opfDoc.getElementsByTagName('title');
+                if (titles.length > 0) {
+                    titleElement = titles[0];
+                }
+            } catch (e) {
+                log('Method 2 failed: ' + e.message);
+            }
+        }
+        
+        if (!titleElement) {
+            try {
+                // Method 3: Try querySelector with different selectors
+                titleElement = opfDoc.querySelector('title') || 
+                              opfDoc.querySelector('[name="title"]');
+            } catch (e) {
+                log('Method 3 failed: ' + e.message);
+            }
+        }
+        
+        bookTitle = titleElement ? titleElement.textContent.trim() : 'Unknown Title';
+        log('Book title: ' + bookTitle);
+        
+        // Get the base path for content files
+        const basePath = opfPath.substring(0, opfPath.lastIndexOf('/') + 1);
+        
+        // Parse the spine (reading order) - use getElementsByTagName
+        const spineElement = opfDoc.getElementsByTagName('spine')[0];
+        const spineItems = spineElement ? spineElement.getElementsByTagName('itemref') : [];
+        
+        const manifestElement = opfDoc.getElementsByTagName('manifest')[0];
+        const manifestItems = manifestElement ? manifestElement.getElementsByTagName('item') : [];
+        
+        // Create a map of manifest items
+        const manifestMap = {};
+        for (let i = 0; i < manifestItems.length; i++) {
+            const item = manifestItems[i];
+            const id = item.getAttribute('id');
+            const href = item.getAttribute('href');
+            const mediaType = item.getAttribute('media-type');
+            
+            if (id && href) {
+                manifestMap[id] = {
+                    href: href,
+                    mediaType: mediaType
+                };
+            }
+        }
+        
+        log('Found ' + Object.keys(manifestMap).length + ' manifest items');
+        
+        // Build chapters array from spine
+        chapters = [];
+        
+        if (spineItems.length > 0) {
+            // Use spine items (proper EPUB structure)
+            for (let i = 0; i < spineItems.length; i++) {
+                const itemref = spineItems[i];
+                const idref = itemref.getAttribute('idref');
+                const manifestItem = manifestMap[idref];
+                
+                if (manifestItem) {
+                    const isHtml = manifestItem.mediaType === 'application/xhtml+xml' || 
+                                  manifestItem.href.endsWith('.html') || 
+                                  manifestItem.href.endsWith('.xhtml') ||
+                                  manifestItem.href.endsWith('.htm');
+                    
+                    if (isHtml) {
+                        const chapterPath = basePath + manifestItem.href;
+                        log('Found spine chapter: ' + chapterPath);
+                        chapters.push({
+                            path: chapterPath,
+                            title: 'Chapter ' + (chapters.length + 1),
+                            index: chapters.length
+                        });
+                    }
+                }
+            }
+        }
+        
+        // If no spine items or no valid chapters found, look for HTML files directly
+        if (chapters.length === 0) {
+            log('No spine chapters found, searching for HTML files...');
+            
+            // Look for HTML files in manifest
+            for (let i = 0; i < manifestItems.length; i++) {
+                const item = manifestItems[i];
+                const href = item.getAttribute('href');
+                const mediaType = item.getAttribute('media-type');
+                
+                if (href && (
+                    mediaType === 'application/xhtml+xml' ||
+                    href.endsWith('.html') || 
+                    href.endsWith('.xhtml') ||
+                    href.endsWith('.htm')
+                )) {
+                    // Skip navigation files
+                    const fileName = href.toLowerCase();
+                    if (!fileName.includes('nav') && 
+                        !fileName.includes('toc') && 
+                        !fileName.includes('cover')) {
+                        
+                        const chapterPath = basePath + href;
+                        log('Found manifest chapter: ' + chapterPath);
+                        chapters.push({
+                            path: chapterPath,
+                            title: 'Chapter ' + (chapters.length + 1),
+                            index: chapters.length
+                        });
+                    }
+                }
+            }
+        }
+        
+        // If still no chapters, search the entire ZIP for HTML files
+        if (chapters.length === 0) {
+            log('No manifest chapters found, searching entire archive...');
+            
+            zip.forEach((relativePath, file) => {
+                const fileName = relativePath.toLowerCase();
+                if ((fileName.endsWith('.html') || 
+                     fileName.endsWith('.xhtml') ||
+                     fileName.endsWith('.htm')) &&
+                    !fileName.includes('nav') &&
+                    !fileName.includes('toc') &&
+                    !fileName.includes('cover')) {
+                    
+                    log('Found archive chapter: ' + relativePath);
+                    chapters.push({
+                        path: relativePath,
+                        title: 'Chapter ' + (chapters.length + 1),
+                        index: chapters.length
+                    });
+                }
+            });
+        }
+        
+        // Sort chapters by filename if they contain numbers
+        chapters.sort((a, b) => {
+            const aMatch = a.path.match(/(\d+)/);
+            const bMatch = b.path.match(/(\d+)/);
+            
+            if (aMatch && bMatch) {
+                return parseInt(aMatch[1]) - parseInt(bMatch[1]);
+            }
+            
+            return a.path.localeCompare(b.path);
+        });
+        
+        // Update chapter titles with proper numbering
+        chapters.forEach((chapter, index) => {
+            chapter.title = 'Chapter ' + (index + 1);
+            chapter.index = index;
+        });
+        
+        log('Found ' + chapters.length + ' total chapters');
+        
+        if (chapters.length === 0) {
+            throw new Error('No readable chapters found in EPUB');
+        }
+        
+        // Debug: log all chapter paths
+        chapters.forEach((chapter, index) => {
+            log('Chapter ' + (index + 1) + ': ' + chapter.path);
+        });
+        
+    } catch (error) {
+        log('Error parsing EPUB structure: ' + error.message);
+        throw error;
+    }
+}
               
               async function displayChapter(chapterIndex) {
-                  try {
-                      if (chapterIndex < 0 || chapterIndex >= chapters.length) {
-                          return;
-                      }
-                      
-                      currentChapterIndex = chapterIndex;
-                      const chapter = chapters[chapterIndex];
-                      
-                      updateStatus('Loading chapter: ' + chapter.title);
-                      log('Displaying chapter: ' + chapter.path);
-                      
-                      // Get the chapter file
-                      const chapterFile = zip.file(chapter.path);
-                      if (!chapterFile) {
-                          throw new Error('Chapter file not found: ' + chapter.path);
-                      }
-                      
-                      // Read the chapter content
-                      const chapterHtml = await chapterFile.async('text');
-                      
-                      // Parse and clean the HTML
-                      const doc = new DOMParser().parseFromString(chapterHtml, 'text/html');
-                      const body = doc.body || doc.documentElement;
-                      
-                      // Extract text content and basic formatting
-                      let cleanContent = '';
-                      
-                      if (body) {
-                          // Get the title from h1, h2, or first heading
-                          const heading = body.querySelector('h1, h2, h3, title');
-                          const chapterTitle = heading ? heading.textContent.trim() : chapter.title;
-                          
-                          // Add chapter title
-                          cleanContent += '<div class="chapter-title">' + escapeHtml(chapterTitle) + '</div>';
-                          
-                          // Process content elements
-                          const elements = body.querySelectorAll('p, div, h1, h2, h3, h4, h5, h6');
-                          
-                          elements.forEach(el => {
-                              const text = el.textContent.trim();
-                              if (text.length > 0) {
-                                  const tagName = el.tagName.toLowerCase();
-                                  if (tagName.startsWith('h')) {
-                                      cleanContent += '<' + tagName + '>' + escapeHtml(text) + '</' + tagName + '>';
-                                  } else {
-                                      cleanContent += '<p>' + escapeHtml(text) + '</p>';
-                                  }
-                              }
-                          });
-                          
-                          // If no content found, try to get all text
-                          if (cleanContent === '<div class="chapter-title">' + escapeHtml(chapterTitle) + '</div>') {
-                              const allText = body.textContent.trim();
-                              if (allText.length > 0) {
-                                  // Split into paragraphs
-                                  const paragraphs = allText.split(/\\n\\s*\\n/);
-                                  paragraphs.forEach(para => {
-                                      const trimmed = para.trim();
-                                      if (trimmed.length > 0) {
-                                          cleanContent += '<p>' + escapeHtml(trimmed) + '</p>';
-                                      }
-                                  });
-                              }
-                          }
-                      }
-                      
-                      // Display the content
-                      document.getElementById('epub-content').innerHTML = cleanContent;
-                      
-                      // Update navigation
-                      updateNavigation();
-                      
-                      // Scroll to top
-                      document.getElementById('epub-content').scrollTop = 0;
-                      
-                      // Send chapter change notification
-                      sendMessage('chapter_changed', {
-                          chapter: chapterIndex + 1,
-                          total: chapters.length,
-                          title: chapter.title
-                      });
-                      
-                      log('Chapter displayed successfully');
-                      
-                  } catch (error) {
-                      log('Error displaying chapter: ' + error.message);
-                      showError('Error loading chapter: ' + error.message);
-                  }
-              }
+    try {
+        if (chapterIndex < 0 || chapterIndex >= chapters.length) {
+            return;
+        }
+        
+        currentChapterIndex = chapterIndex;
+        const chapter = chapters[chapterIndex];
+        
+        updateStatus('Loading chapter: ' + chapter.title);
+        log('Displaying chapter: ' + chapter.path);
+        
+        // Get the chapter file
+        const chapterFile = zip.file(chapter.path);
+        if (!chapterFile) {
+            throw new Error('Chapter file not found: ' + chapter.path);
+        }
+        
+        // Read the chapter content
+        const chapterHtml = await chapterFile.async('text');
+        
+        // Parse and clean the HTML
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(chapterHtml, 'text/html');
+        
+        // Try to get body, or fallback to documentElement
+        let contentElement = doc.body;
+        if (!contentElement || !contentElement.textContent.trim()) {
+            contentElement = doc.documentElement;
+        }
+        
+        // Extract text content and basic formatting
+        let cleanContent = '';
+        let chapterTitle = chapter.title;
+        
+        if (contentElement) {
+            // Try to get a better chapter title
+            const headings = contentElement.querySelectorAll('h1, h2, h3, title');
+            if (headings.length > 0) {
+                const firstHeading = headings[0];
+                const headingText = firstHeading.textContent.trim();
+                if (headingText && headingText.length > 0 && headingText.length < 100) {
+                    chapterTitle = headingText;
+                }
+            }
+            
+            // Add chapter title
+            cleanContent += '<div class="chapter-title">' + escapeHtml(chapterTitle) + '</div>';
+            
+            // Process content elements
+            const contentElements = contentElement.querySelectorAll('p, div, h1, h2, h3, h4, h5, h6, span, section, article');
+            
+            if (contentElements.length > 0) {
+                contentElements.forEach(el => {
+                    const text = el.textContent.trim();
+                    if (text.length > 0) {
+                        const tagName = el.tagName.toLowerCase();
+                        if (tagName.startsWith('h')) {
+                            cleanContent += '<' + tagName + '>' + escapeHtml(text) + '</' + tagName + '>';
+                        } else {
+                            cleanContent += '<p>' + escapeHtml(text) + '</p>';
+                        }
+                    }
+                });
+            } else {
+                // Fallback: get all text content and split into paragraphs
+                const allText = contentElement.textContent.trim();
+                if (allText.length > 0) {
+                    // Split by multiple newlines or periods followed by whitespace
+                    const sentences = allText.split(/[.!?]+\\s+|\\n\\s*\\n+/);
+                    
+                    sentences.forEach(sentence => {
+                        const trimmed = sentence.trim();
+                        if (trimmed.length > 20) { // Only include substantial sentences
+                            cleanContent += '<p>' + escapeHtml(trimmed + '.') + '</p>';
+                        }
+                    });
+                }
+            }
+        }
+        
+        // If still no content, show an error message
+        if (cleanContent === '<div class="chapter-title">' + escapeHtml(chapterTitle) + '</div>') {
+            cleanContent += '<p><em>No readable content found in this chapter.</em></p>';
+            cleanContent += '<p><small>Chapter file: ' + escapeHtml(chapter.path) + '</small></p>';
+        }
+        
+        // Display the content
+        document.getElementById('epub-content').innerHTML = cleanContent;
+        
+        // Update navigation
+        updateNavigation();
+        
+        // Scroll to top
+        document.getElementById('epub-content').scrollTop = 0;
+        
+        // Send chapter change notification
+        sendMessage('chapter_changed', {
+            chapter: chapterIndex + 1,
+            total: chapters.length,
+            title: chapterTitle
+        });
+        
+        log('Chapter displayed successfully');
+        
+    } catch (error) {
+        log('Error displaying chapter: ' + error.message);
+        showError('Error loading chapter: ' + error.message);
+    }
+}
               
               function escapeHtml(unsafe) {
                   return unsafe
@@ -1069,21 +1231,21 @@ const ReadingScreen = ({ route, navigation }) => {
       </body>
       </html>
     `;
-    
+
     setEpubHtml(html);
   };
-  
+
   // Update your handleWebViewMessage function to handle the new messages:
-  const handleWebViewMessage = (event) => {
+  const handleWebViewMessage = event => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       console.log('WebView message received:', data);
-      
+
       switch (data.type) {
         case 'log':
           console.log('[WebView]', data.data);
           break;
-          
+
         case 'epub_loaded':
           console.log('EPUB loaded successfully:', data.data);
           setLoading(false);
@@ -1095,19 +1257,19 @@ const ReadingScreen = ({ route, navigation }) => {
             console.log('Book title from EPUB:', data.data.title);
           }
           break;
-          
+
         case 'chapter_changed':
           console.log('Chapter changed:', data.data);
           setCurrentPage(data.data.chapter);
           setTotalPages(data.data.total);
           break;
-          
+
         case 'error':
           console.error('WebView error:', data.data);
           setError(`EPUB Error: ${data.data}`);
           setLoading(false);
           break;
-          
+
         default:
           console.log('Unknown WebView message:', data);
       }
