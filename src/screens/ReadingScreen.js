@@ -77,6 +77,7 @@ const ReadingScreen = ({ route, navigation }) => {
         sendMessageToWebView({
           type: 'loadEpubData',
           epubData: epubData,
+          startingChapter: Math.max(currentPage - 1, 0),
         });
       }, 1000);
     }
@@ -773,43 +774,54 @@ const ReadingScreen = ({ route, navigation }) => {
               }
               
               async function processEpubData(data) {
-                  try {
-                      updateStatus('Processing EPUB data...');
-                      
-                      // Convert base64 back to ArrayBuffer
-                      const arrayBuffer = base64ToArrayBuffer(data.base64);
-                      log('Converted base64 to ArrayBuffer: ' + arrayBuffer.byteLength + ' bytes');
-                      
-                      // Load the EPUB with JSZip
-                      updateStatus('Extracting EPUB archive...');
-                      zip = await JSZip.loadAsync(arrayBuffer);
-                      log('EPUB archive loaded successfully');
-                      
-                      // Parse EPUB structure
-                      await parseEpubStructure();
-                      
-                      // Display first chapter
-                      await displayChapter(0);
-                      
-                      // Show the reader interface
-                      document.getElementById('loading-container').style.display = 'none';
-                      document.getElementById('epub-reader').style.display = 'flex';
-                      
-                      // Send success message
-                      sendMessage('epub_loaded', {
-                          size: data.size,
-                          pages: chapters.length,
-                          currentPage: 1,
-                          title: bookTitle
-                      });
-                      
-                      log('EPUB processing completed successfully');
-                      
-                  } catch (error) {
-                      log('Error processing EPUB: ' + error.message);
-                      showError('Failed to process EPUB: ' + error.message);
-                  }
-              }
+    try {
+        updateStatus('Processing EPUB data...');
+        
+        // Convert base64 back to ArrayBuffer
+        const arrayBuffer = base64ToArrayBuffer(data.base64);
+        log('Converted base64 to ArrayBuffer: ' + arrayBuffer.byteLength + ' bytes');
+        
+        // Load the EPUB with JSZip
+        updateStatus('Extracting EPUB archive...');
+        zip = await JSZip.loadAsync(arrayBuffer);
+        log('EPUB archive loaded successfully');
+        
+        // Parse EPUB structure
+        await parseEpubStructure();
+        
+        // Determine starting chapter from saved progress
+        let startingChapter = 0; // Default to first chapter
+        
+        // Check if we have starting chapter info from React Native
+        if (data.startingChapter !== undefined && data.startingChapter >= 0) {
+            startingChapter = Math.min(data.startingChapter, chapters.length - 1);
+            log('Resuming from saved progress - Chapter ' + (startingChapter + 1));
+        } else {
+            log('Starting from beginning - Chapter 1');
+        }
+        
+        // Display the starting chapter
+        await displayChapter(startingChapter);
+        
+        // Show the reader interface
+        document.getElementById('loading-container').style.display = 'none';
+        document.getElementById('epub-reader').style.display = 'flex';
+        
+        // Send success message with current chapter info
+        sendMessage('epub_loaded', {
+            size: data.size,
+            pages: chapters.length,
+            currentPage: startingChapter + 1, // Convert back to 1-based for React Native
+            title: bookTitle
+        });
+        
+        log('EPUB processing completed successfully');
+        
+    } catch (error) {
+        log('Error processing EPUB: ' + error.message);
+        showError('Failed to process EPUB: ' + error.message);
+    }
+}
               
               async function parseEpubStructure() {
     try {
@@ -1180,27 +1192,31 @@ const ReadingScreen = ({ route, navigation }) => {
               }
               
               function handleMessage(data) {
-                  log('Received message: ' + JSON.stringify(data));
-                  
-                  switch(data.type) {
-                      case 'loadEpubData':
-                          epubData = data.epubData;
-                          processEpubData(epubData);
-                          break;
-                      case 'goToPage':
-                          goToChapter(data.page - 1);
-                          break;
-                      case 'goNext':
-                          nextChapter();
-                          break;
-                      case 'goPrev':
-                          previousChapter();
-                          break;
-                      case 'test':
-                          log('Test message received');
-                          break;
-                  }
-              }
+    log('Received message: ' + JSON.stringify(data));
+    
+    switch(data.type) {
+        case 'loadEpubData':
+            epubData = data.epubData;
+            // Pass the starting chapter info along with the EPUB data
+            processEpubData({
+                ...epubData,
+                startingChapter: data.startingChapter
+            });
+            break;
+        case 'goToPage':
+            goToChapter(data.page - 1);
+            break;
+        case 'goNext':
+            nextChapter();
+            break;
+        case 'goPrev':
+            previousChapter();
+            break;
+        case 'test':
+            log('Test message received');
+            break;
+    }
+}
               
               // Listen for messages
               document.addEventListener('message', function(event) {
@@ -1251,7 +1267,18 @@ const ReadingScreen = ({ route, navigation }) => {
           setLoading(false);
           setEpubReady(true);
           setTotalPages(data.data.pages || 1);
-          setCurrentPage(data.data.currentPage || 1);
+
+          // Use the current page from WebView (which respects saved progress)
+          const webViewCurrentPage = data.data.currentPage || 1;
+          setCurrentPage(webViewCurrentPage);
+
+          console.log(
+            'EPUB loaded - Current chapter:',
+            webViewCurrentPage,
+            'of',
+            data.data.pages,
+          );
+
           // Update book title if available
           if (data.data.title) {
             console.log('Book title from EPUB:', data.data.title);
