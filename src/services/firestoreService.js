@@ -497,6 +497,49 @@ export const addToReadingHistory = async (userId, bookId, progressData) => {
   }
 };
 
+// export const getReadingHistory = async (userId, limit = 50) => {
+//   try {
+//     const snapshot = await firestoreService
+//       .collection('users')
+//       .doc(userId)
+//       .collection('reading_history')
+//       .orderBy('lastRead', 'desc')
+//       .limit(limit)
+//       .get();
+    
+//     const historyItems = [];
+    
+//     for (const doc of snapshot.docs) {
+//       const historyData = doc.data();
+      
+//       // Get book details from shared books collection
+//       const bookDoc = await firestoreService
+//         .collection('books')
+//         .doc(historyData.bookId)
+//         .get();
+      
+//       if (bookDoc.exists) {
+//         const bookData = bookDoc.data();
+//         historyItems.push({
+//           id: doc.id,
+//           ...historyData,
+//           bookData: {
+//             id: bookDoc.id,
+//             ...bookData
+//           }
+//         });
+//       }
+//     }
+    
+//     return { success: true, data: historyItems };
+//   } catch (error) {
+//     console.error('Get reading history error:', error);
+//     return { success: false, error: error.message };
+//   }
+// };
+
+// Replace the getReadingHistory function in firestoreService with this:
+
 export const getReadingHistory = async (userId, limit = 50) => {
   try {
     const snapshot = await firestoreService
@@ -525,7 +568,9 @@ export const getReadingHistory = async (userId, limit = 50) => {
           ...historyData,
           bookData: {
             id: bookDoc.id,
-            ...bookData
+            ...bookData,
+            uploadedAt: bookData.uploadedAt || bookData.addedAt,
+            addedAt: bookData.addedAt || bookData.uploadedAt
           }
         });
       }

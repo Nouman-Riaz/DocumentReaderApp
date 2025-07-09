@@ -84,9 +84,24 @@ const HistoryScreen = ({ navigation }) => {
     }
   };
 
+  // const handleBookPress = (historyItem) => {
+  //   if (historyItem.bookData) {
+  //     navigation.navigate('Reading', { book: historyItem.bookData });
+  //   }
+  // };
+
   const handleBookPress = (historyItem) => {
     if (historyItem.bookData) {
-      navigation.navigate('Reading', { book: historyItem.bookData });
+      const bookWithProgress = {
+        ...historyItem.bookData,
+        progress: historyItem.progress || 0,
+        currentPage: historyItem.currentPage || 1,
+        totalPages: historyItem.totalPages || 1,
+        lastRead: historyItem.lastRead,
+        isCompleted: historyItem.isCompleted || false
+      };
+      
+      navigation.navigate('Reading', { book: bookWithProgress });
     }
   };
 
@@ -135,7 +150,7 @@ const HistoryScreen = ({ navigation }) => {
                 {bookData.title}
               </Text>
               <Text style={styles.bookMeta}>
-                {bookData.fileType?.includes('pdf') ? 'PDF' : 'EPUB'} • {formatDate(lastRead)}
+                {bookData.fileType?.includes('pdf') ? 'PDF' : 'EPUB'}
               </Text>
             </View>
             <View style={styles.statusContainer}>
